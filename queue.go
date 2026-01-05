@@ -52,9 +52,9 @@ func New[T any](opts ...QueueOptFunc) *Queue[T] {
 
 // WithInitialCapacity is a constructor function to set the initial
 // capacity of the queue's internal ring buffer.
-func WithInitialCapacity(cap int) QueueOptFunc {
+func WithInitialCapacity(capacity int) QueueOptFunc {
 	return func(o *qopts) {
-		o.initialCapacity = cap
+		o.initialCapacity = capacity
 	}
 }
 
@@ -84,7 +84,7 @@ func (q *Queue[T]) Len() int {
 }
 
 // Close closes the queue's channels. Items can be dequeued until the queue is empty
-// at which point reading the dequeue channel with v,ok retuns false
+// at which point reading the dequeue channel with v,ok returns false
 func (q *Queue[T]) Close() {
 	select {
 	case <-q.closeCh:

@@ -16,13 +16,13 @@ type ring[T any] struct {
 	popping    atomic.Bool
 }
 
-func newRing[T any](cap int) ring[T] {
-	if cap < 1 {
-		cap = 1
+func newRing[T any](capacity int) ring[T] {
+	if capacity < 1 {
+		capacity = 1
 	}
 
 	return ring[T]{
-		buf:   make([]T, cap),
+		buf:   make([]T, capacity),
 		isPod: checkPOD[T](),
 	}
 }
@@ -84,7 +84,7 @@ func (r *ring[T]) close() {
 	r.size = 0
 }
 
-// copySafe is used to copy elements that are or contain pointes or slices
+// copySafe is used to copy elements that are or contain pointers or slices
 // so the GC does not lose track of them
 func (r *ring[T]) copySafe(newBuf []T) {
 	if r.head < r.tail {

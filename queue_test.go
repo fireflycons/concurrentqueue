@@ -58,7 +58,7 @@ func TestEnqueueDequeue(t *testing.T) {
 				},
 			}
 			input[i] = v
-			q.Enqueue(v)
+			require.NoError(t, q.Enqueue(v))
 		}
 
 		q.Close()
@@ -95,7 +95,7 @@ func TestDrain(t *testing.T) {
 				q := queue.New[int]()
 				for range tt {
 					require.NotPanics(t, func() {
-						q.Enqueue(1)
+						require.NoError(t, q.Enqueue(1))
 					}, "Enqueue should not panic")
 				}
 
@@ -114,7 +114,7 @@ func TestDrain(t *testing.T) {
 		q := queue.New[int]()
 
 		for range 1_000_000 {
-			q.Enqueue(1)
+			require.NoError(t, q.Enqueue(1))
 		}
 
 		wg := sync.WaitGroup{}
@@ -140,7 +140,7 @@ func TestDrain(t *testing.T) {
 
 func TestConcurrentEnqueueDequeue(t *testing.T) {
 
-	// Simluate a worker pool situation where something popluates the queue while workers
+	// Simulate a worker pool situation where something populates the queue while workers
 	// pull from it
 
 	const nElements = 10_000
@@ -159,7 +159,7 @@ func TestConcurrentEnqueueDequeue(t *testing.T) {
 
 	wg.Go(func() {
 		for i := range nElements {
-			q.Enqueue(input[i])
+			require.NoError(t, q.Enqueue(input[i]))
 		}
 
 		q.Close()
@@ -204,7 +204,7 @@ func BenchmarkIntEnqueue(b *testing.B) {
 			q := queue.New[int](queue.WithInitialCapacity(sz))
 			runtime.GC()
 			for b.Loop() {
-				q.Enqueue(1)
+				require.NoError(b, q.Enqueue(1))
 			}
 			l := q.Len()
 			q.Close()
@@ -220,10 +220,10 @@ func BenchmarkIntDequeue(b *testing.B) {
 	q := queue.New[int](queue.WithInitialCapacity(10_000_000))
 
 	for i := range 10_000_000 {
-		q.Enqueue(i)
+		require.NoError(b, q.Enqueue(i))
 	}
 
 	for b.Loop() {
-		_, _ = <-q.Dequeue()
+		<-q.Dequeue()
 	}
 }
