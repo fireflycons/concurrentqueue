@@ -8,21 +8,53 @@ import (
 	"testing"
 	"time"
 
-	queue "github.com/fireflycons/chan-queue"
+	queue "github.com/fireflycons/concurrentqueue"
 	"github.com/stretchr/testify/require"
 )
 
+type compound struct {
+	id   int
+	data struct {
+		name string
+	}
+}
+
+type simple struct {
+	value  int
+	value2 float64
+}
+
 func TestEnqueueDequeue(t *testing.T) {
 
-	t.Run("Plain Old Datatype", func(t *testing.T) {
+	const nElements = 1000
+
+	t.Run("Plain Old Datatype (scalar)", func(t *testing.T) {
 		q := queue.New[int]()
 
-		input := make([]int, 1000)
-		output := make([]int, 0, 1000)
+		input := makeIntInput(nElements)
+		output := make([]int, 0, nElements)
 
-		for i := range 1000 {
-			input[i] = i
-			require.NoError(t, q.Enqueue(i))
+		for i := range nElements {
+			require.NoError(t, q.Enqueue(input[i]))
+		}
+
+		q.Close()
+
+		for v := range q.Dequeue() {
+			output = append(output, v)
+		}
+
+		require.Equal(t, input, output)
+	})
+
+	t.Run("Plain Old Datatype (simple struct)", func(t *testing.T) {
+		q := queue.New[simple]()
+
+		input := makeSimpleInput(nElements)
+		output := make([]simple, 0, nElements)
+
+		for i := range nElements {
+			require.NoError(t, q.Enqueue(input[i]))
 		}
 
 		q.Close()
@@ -36,29 +68,14 @@ func TestEnqueueDequeue(t *testing.T) {
 
 	t.Run("Compound Datatype", func(t *testing.T) {
 
-		type compound struct {
-			id   int
-			data struct {
-				name string
-			}
-		}
-
+		const nElements = 1000
 		q := queue.New[compound]()
 
-		input := make([]compound, 1000)
-		output := make([]compound, 0, 1000)
+		input := makeCompoundInput(nElements)
+		output := make([]compound, 0, nElements)
 
-		for i := range 1000 {
-			v := compound{
-				id: i,
-				data: struct {
-					name string
-				}{
-					name: fmt.Sprintf("test %03d", i),
-				},
-			}
-			input[i] = v
-			require.NoError(t, q.Enqueue(v))
+		for i := range nElements {
+			require.NoError(t, q.Enqueue(input[i]))
 		}
 
 		q.Close()
@@ -226,4 +243,40 @@ func BenchmarkIntDequeue(b *testing.B) {
 	for b.Loop() {
 		<-q.Dequeue()
 	}
+}
+
+func makeCompoundInput(n int) []compound {
+	input := make([]compound, n)
+	for i := range n {
+		v := compound{
+			id: i,
+			data: struct {
+				name string
+			}{
+				name: fmt.Sprintf("test %03d", i),
+			},
+		}
+		input[i] = v
+	}
+	return input
+}
+
+func makeSimpleInput(n int) []simple {
+	input := make([]simple, n)
+	for i := range n {
+		v := simple{
+			value:  i,
+			value2: float64(i) * 1.5,
+		}
+		input[i] = v
+	}
+	return input
+}
+
+func makeIntInput(n int) []int {
+	input := make([]int, n)
+	for i := range n {
+		input[i] = i
+	}
+	return input
 }

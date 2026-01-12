@@ -1,6 +1,7 @@
 package queue
 
 import (
+	"fmt"
 	"reflect"
 	"sync/atomic"
 	"unsafe"
@@ -13,9 +14,10 @@ type ring[T any] struct {
 	size       int
 	isPod      bool
 	closed     atomic.Bool
-	popping    atomic.Bool
+	busy       atomic.Bool
 }
 
+// newRing creates a new ring buffer with the specified initial capacity.
 func newRing[T any](capacity int) ring[T] {
 	if capacity < 1 {
 		capacity = 1
@@ -27,10 +29,21 @@ func newRing[T any](capacity int) ring[T] {
 	}
 }
 
+func (r *ring[T]) String() string {
+	return fmt.Sprintf("ring{cap=%d, len=%d, head=%d, tail=%d, closed=%v}", len(r.buf), r.size, r.head, r.tail, r.closed.Load())
+}
+
+// len returns the number of elements in the ring buffer.
 func (r *ring[T]) len() int { return r.size }
 
+// push adds an element to the ring buffer.
+// If the ring is closed, the element is not added.
 func (r *ring[T]) push(v T) {
+	// Spin if busy
+	for !r.busy.CompareAndSwap(false, true) {
+	}
 	if r.closed.Load() {
+		r.busy.Store(false)
 		return
 	}
 	if r.size == len(r.buf) {
@@ -39,26 +52,32 @@ func (r *ring[T]) push(v T) {
 	r.buf[r.tail] = v
 	r.tail = (r.tail + 1) % len(r.buf)
 	r.size++
+	r.busy.Store(false)
 }
 
+// pop removes and returns the next element from the ring buffer.
+// If the ring is closed, the zero value of T is returned.
 func (r *ring[T]) pop() T {
 	var zero T
-	r.popping.Store(true)
+	// Spin if busy
+	for !r.busy.CompareAndSwap(false, true) {
+	}
 	if r.closed.Load() {
-		r.popping.Store(false)
+		r.busy.Store(false)
 		return zero
 	}
 	v := r.buf[r.head]
 	r.buf[r.head] = zero
 	r.head = (r.head + 1) % len(r.buf)
 	r.size--
-	r.popping.Store(false)
+	r.busy.Store(false)
 	return v
 }
 
+// grow doubles the capacity of the ring buffer
 func (r *ring[T]) grow() {
-	newCap := len(r.buf) * 2
-	newBuf := make([]T, newCap)
+
+	newBuf := make([]T, nextslicecap(len(r.buf)))
 
 	if r.isPod {
 		r.copyUnsafe(newBuf)
@@ -71,10 +90,60 @@ func (r *ring[T]) grow() {
 	r.tail = r.size
 }
 
+func (r *ring[T]) appendTo(other *ring[T]) {
+
+	// Lock both rings
+	for !other.busy.CompareAndSwap(false, true) {
+	}
+
+	for !r.busy.CompareAndSwap(false, true) {
+	}
+
+	if r.size == 0 || other.closed.Load() {
+		other.busy.Store(false)
+		r.busy.Store(false)
+		return
+	}
+
+	// Ensure capacity in `other`
+	required := other.size + r.size
+	if required > len(other.buf) {
+		newCap := len(other.buf)
+		for newCap < required {
+			newCap = nextslicecap(newCap)
+		}
+
+		newBuf := make([]T, newCap)
+		if other.isPod {
+			other.copyUnsafe(newBuf)
+		} else {
+			other.copySafe(newBuf)
+		}
+
+		other.buf = newBuf
+		other.head = 0
+		other.tail = other.size
+	}
+
+	// Append elements from r into other.buf starting at other.tail
+	if r.isPod && other.isPod {
+		other.appendUnsafeFrom(r)
+	} else {
+		other.appendSafeFrom(r)
+	}
+
+	other.size += r.size
+	other.busy.Store(false)
+	r.busy.Store(false)
+}
+
+// close marks the ring as closed and zeroes out the buffer to allow GC to reclaim memory
 func (r *ring[T]) close() {
+
 	r.closed.Store(true)
-	// Spin while a pop is in progress
-	for !r.popping.CompareAndSwap(false, true) {
+
+	// Spin if busy
+	for !r.busy.CompareAndSwap(false, true) {
 	}
 
 	// Zero out the buffer so it can be reclaimed by GC
@@ -82,6 +151,8 @@ func (r *ring[T]) close() {
 	r.head = 0
 	r.tail = 0
 	r.size = 0
+
+	r.busy.Store(false)
 }
 
 // copySafe is used to copy elements that are or contain pointers or slices
@@ -108,6 +179,59 @@ func (r *ring[T]) copyUnsafe(newBuf []T) {
 		n1 := len(r.buf) - r.head
 		memmove(unsafe.Pointer(&newBuf[0]), unsafe.Pointer(&r.buf[r.head]), uintptr(n1)*elemSize)
 		memmove(unsafe.Pointer(&newBuf[n1]), unsafe.Pointer(&r.buf[0]), uintptr(r.tail)*elemSize)
+	}
+}
+
+func (other *ring[T]) appendSafeFrom(r *ring[T]) {
+	dstCap := len(other.buf)
+	dst := other.tail
+
+	if r.head < r.tail {
+		n := r.tail - r.head
+		copy(other.buf[dst:], r.buf[r.head:r.tail])
+		other.tail = (dst + n) % dstCap
+	} else {
+		if r.size == 0 {
+			return
+		}
+		n1 := len(r.buf) - r.head
+		copy(other.buf[dst:], r.buf[r.head:])
+		dst = (dst + n1) % dstCap
+		copy(other.buf[dst:], r.buf[:r.tail])
+		other.tail = (dst + r.tail) % dstCap
+	}
+}
+
+func (other *ring[T]) appendUnsafeFrom(r *ring[T]) {
+	elemSize := unsafe.Sizeof(r.buf[0])
+	dstCap := len(other.buf)
+	dst := other.tail
+
+	if r.head < r.tail {
+		n := r.tail - r.head
+		memmove(
+			unsafe.Pointer(&other.buf[dst]),
+			unsafe.Pointer(&r.buf[r.head]),
+			uintptr(n)*elemSize,
+		)
+		other.tail = (dst + n) % dstCap
+	} else {
+		if r.size == 0 {
+			return
+		}
+		n1 := len(r.buf) - r.head
+		memmove(
+			unsafe.Pointer(&other.buf[dst]),
+			unsafe.Pointer(&r.buf[r.head]),
+			uintptr(n1)*elemSize,
+		)
+		dst = (dst + n1) % dstCap
+		memmove(
+			unsafe.Pointer(&other.buf[dst]),
+			unsafe.Pointer(&r.buf[0]),
+			uintptr(r.tail)*elemSize,
+		)
+		other.tail = (dst + r.tail) % dstCap
 	}
 }
 
@@ -154,6 +278,40 @@ func isPODType(rt reflect.Type) bool {
 	default:
 		return false
 	}
+}
+
+// nextslicecap computes the next appropriate slice length.
+// This is adapted from the built-in Go slice growth algorithm.
+func nextslicecap(oldCap int) int {
+	newLen := oldCap + 1
+	newcap := oldCap
+	doublecap := newcap + newcap
+	if newLen > doublecap {
+		return newLen
+	}
+	const threshold = 1024
+	if oldCap < threshold {
+		return doublecap
+	}
+	for {
+		// Transition from growing 2x for small slices
+		// to growing 1.25x for large slices. This formula
+		// gives a smooth-ish transition between the two.
+		newcap += (newcap + 3*threshold) >> 2
+		// We need to check `newcap >= newLen` and whether `newcap` overflowed.
+		// newLen is guaranteed to be larger than zero, hence
+		// when newcap overflows then `uint(newcap) > uint(newLen)`.
+		// This allows to check for both with the same comparison.
+		if uint(newcap) >= uint(newLen) {
+			break
+		}
+	}
+	// Set newcap to the requested cap when
+	// the newcap calculation overflowed.
+	if newcap <= 0 {
+		return newLen
+	}
+	return newcap
 }
 
 // memmove wraps runtime.memmove

@@ -1,7 +1,11 @@
-// Package queue implements a lock-free channel-based queue.
-//
+// Package queue implements a mutex-free channel-based queue.
 // It is not designed for raw speed, but rather to be used as a data source
 // for things like worker pools where reading input from a channel makes sense.
+//
+// The queue is backed by a ring buffer with a default initial capacity of 256 elements that grows as needed.
+// A constructor method is provided to set the initial capacity if desired.
+//
+// Where locking is required, it is done at the ring buffer level using spinlocks to minimize contention.
 package queue
 
 import (
@@ -9,6 +13,7 @@ import (
 	"sync/atomic"
 )
 
+// Queue is a concurrent queue that supports multiple producers and consumers.
 type Queue[T any] struct {
 	enqCh   chan T
 	deqCh   chan T
@@ -23,12 +28,14 @@ type qopts struct {
 	initialCapacity int
 }
 
+// QueueOptFunc is a function that configures a Queue.
 type QueueOptFunc func(*qopts)
 
 // ErrQueueClosed is returned by Enqueue if the Close method has been called.
 var ErrQueueClosed = errors.New("queue is closed")
 
-// New creates a new queue.
+// New creates a new queue. You can provide optional configuration functions
+// to customize the queue's behavior.
 func New[T any](opts ...QueueOptFunc) *Queue[T] {
 
 	options := qopts{
@@ -94,16 +101,35 @@ func (q *Queue[T]) Close() {
 	}
 }
 
-// Drain empties the queue of any reaining elements.
+// Drain empties the queue of any remaining elements and releases resources.
 //
 // You should call this if you do not expect your consumers
 // to empty the queue themselves, else a goroutine and some
 // memory will be leaked.
+//
+// If called before Close, Drain will have no effect.
 func (q *Queue[T]) Drain() {
 	if !q.closed.Load() {
 		return
 	}
 
+	q.rb.close()
+}
+
+// DrainTo appends all remaining elements in this queue to another queue
+// and closes this queue.
+//
+// You should call this if you do not expect your consumers
+// to empty the queue themselves, else a goroutine and some
+// memory will be leaked.
+//
+// If called before Close, DrainTo will have no effect.
+func (q *Queue[T]) DrainTo(other *Queue[T]) {
+	if !q.closed.Load() {
+		return
+	}
+
+	q.rb.appendTo(&other.rb)
 	q.rb.close()
 }
 
