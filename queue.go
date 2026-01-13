@@ -1,4 +1,4 @@
-// Package queue implements a mutex-free channel-based queue.
+// Package queue implements a mutex-free channel-based generic queue.
 // It is not designed for raw speed, but rather to be used as a data source
 // for things like worker pools where reading input from a channel makes sense.
 //

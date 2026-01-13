@@ -29,8 +29,9 @@ temp/env-check.ok:
 
 ##@ Documentation
 
-docs: lint ## Build API documetation
-	gomarkdoc . > README.md
+docs: lint ## Build API documentation
+	mkdir -p docs
+	gomarkdoc . > docs/api.md
 
 ##@ Compilation/Code Generation
 

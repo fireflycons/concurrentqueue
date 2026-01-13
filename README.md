@@ -2,139 +2,50 @@
 
 # queue
 
-```go
-import "github.com/fireflycons/concurrentqueue"
-```
+[![Go Reference](https://pkg.go.dev/badge/github.com/fireflycons/concurrentqueue.svg)](https://pkg.go.dev/github.com/fireflycons/concurrentqueue) [![build](https://github.com/fireflycons/concurrentqueue/actions/workflows/build.yml/badge.svg)](https://github.com/fireflycons/concurrentqueue/actions/workflows/build.yml) [![Go Report Card](https://goreportcard.com/badge/github.com/fireflycons/concurrentqueue)](https://goreportcard.com/report/github.com/fireflycons/concurrentqueue)
 
-Package queue implements a mutex\-free channel\-based queue. It is not designed for raw speed, but rather to be used as a data source for things like worker pools where reading input from a channel makes sense.
+
+Package queue implements a mutex\-free channel\-based generic queue. It is not designed for raw speed, but rather to be used as a data source for things like worker pools where reading input from a channel makes sense.
 
 The queue is backed by a ring buffer with a default initial capacity of 256 elements that grows as needed. A constructor method is provided to set the initial capacity if desired.
 
 Where locking is required, it is done at the ring buffer level using spinlocks to minimize contention.
 
-## Index
+## Features
 
-- [Variables](<#variables>)
-- [type Queue](<#Queue>)
-  - [func New\[T any\]\(opts ...QueueOptFunc\) \*Queue\[T\]](<#New>)
-  - [func \(q \*Queue\[T\]\) Close\(\)](<#Queue[T].Close>)
-  - [func \(q \*Queue\[T\]\) Dequeue\(\) \<\-chan T](<#Queue[T].Dequeue>)
-  - [func \(q \*Queue\[T\]\) Drain\(\)](<#Queue[T].Drain>)
-  - [func \(q \*Queue\[T\]\) DrainTo\(other \*Queue\[T\]\)](<#Queue[T].DrainTo>)
-  - [func \(q \*Queue\[T\]\) Enqueue\(v T\) error](<#Queue[T].Enqueue>)
-  - [func \(q \*Queue\[T\]\) Len\(\) int](<#Queue[T].Len>)
-- [type QueueOptFunc](<#QueueOptFunc>)
-  - [func WithInitialCapacity\(capacity int\) QueueOptFunc](<#WithInitialCapacity>)
+* Dependency free
+* Mutex free
+* Concurrent
+* Generic
+* Channel based implementation
+* Backed by a ringbuffer for reduced allocs
+* Used by my [workerpool](https://pkg.go.dev/github.com/fireflycons/workerpool) implementation
 
-
-## Variables
-
-<a name="ErrQueueClosed"></a>ErrQueueClosed is returned by Enqueue if the Close method has been called.
+## Example
 
 ```go
-var ErrQueueClosed = errors.New("queue is closed")
-```
+package main
 
-<a name="Queue"></a>
-## type Queue
+import (
+	"fmt"
 
-Queue is a concurrent queue that supports multiple producers and consumers.
+	queue "github.com/fireflycons/concurrentqueue"
+)
 
-```go
-type Queue[T any] struct {
-    // contains filtered or unexported fields
+func main() {
+	q := queue.New[int]()
+
+	for i := range 10 {
+		_ = q.Enqueue(i)
+	}
+
+	// Close the queue to signal no more elements will be added
+	q.Close()
+
+	// Dequeue is a channel, therefore it would block until elements are available
+	// or the queue is closed and emptied.
+	for v := range q.Dequeue() {
+		fmt.Println(v)
+	}
 }
 ```
-
-<a name="New"></a>
-### func New
-
-```go
-func New[T any](opts ...QueueOptFunc) *Queue[T]
-```
-
-New creates a new queue. You can provide optional configuration functions to customize the queue's behavior.
-
-<a name="Queue[T].Close"></a>
-### func \(\*Queue\[T\]\) Close
-
-```go
-func (q *Queue[T]) Close()
-```
-
-Close closes the queue's channels. Items can be dequeued until the queue is empty at which point reading the dequeue channel with v,ok returns false
-
-<a name="Queue[T].Dequeue"></a>
-### func \(\*Queue\[T\]\) Dequeue
-
-```go
-func (q *Queue[T]) Dequeue() <-chan T
-```
-
-Dequeue returns the queue's read channel. Reading the channel will block if the queue is empty, or return false on v,ok if the queue has been closed.
-
-<a name="Queue[T].Drain"></a>
-### func \(\*Queue\[T\]\) Drain
-
-```go
-func (q *Queue[T]) Drain()
-```
-
-Drain empties the queue of any remaining elements and releases resources.
-
-You should call this if you do not expect your consumers to empty the queue themselves, else a goroutine and some memory will be leaked.
-
-If called before Close, Drain will have no effect.
-
-<a name="Queue[T].DrainTo"></a>
-### func \(\*Queue\[T\]\) DrainTo
-
-```go
-func (q *Queue[T]) DrainTo(other *Queue[T])
-```
-
-DrainTo appends all remaining elements in this queue to another queue and closes this queue.
-
-You should call this if you do not expect your consumers to empty the queue themselves, else a goroutine and some memory will be leaked.
-
-If called before Close, DrainTo will have no effect.
-
-<a name="Queue[T].Enqueue"></a>
-### func \(\*Queue\[T\]\) Enqueue
-
-```go
-func (q *Queue[T]) Enqueue(v T) error
-```
-
-Enqueue adds an element to the back of the queue. If the queue is closed, an error is returned.
-
-You must call Close\(\) when finished appending elements to prevent the Dequeue channel from blocking when the queue empties.
-
-<a name="Queue[T].Len"></a>
-### func \(\*Queue\[T\]\) Len
-
-```go
-func (q *Queue[T]) Len() int
-```
-
-Len returns the queue length, i.e. number of items in the queue.
-
-<a name="QueueOptFunc"></a>
-## type QueueOptFunc
-
-QueueOptFunc is a function that configures a Queue.
-
-```go
-type QueueOptFunc func(*qopts)
-```
-
-<a name="WithInitialCapacity"></a>
-### func WithInitialCapacity
-
-```go
-func WithInitialCapacity(capacity int) QueueOptFunc
-```
-
-WithInitialCapacity is a constructor function to set the initial capacity of the queue's internal ring buffer.
-
-Generated by [gomarkdoc](<https://github.com/princjef/gomarkdoc>)
